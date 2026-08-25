@@ -427,10 +427,43 @@ function ScanScreen({ onResult, onBack }: { onResult: (r: Screen) => void; onBac
     (file: File) => {
       const url = URL.createObjectURL(file)
       setPreview(url)
-      setTimeout(() => {
-        const results: Screen[] = ['result-pass', 'result-check', 'result-pack']
-        onResult(results[Math.floor(Math.random() * results.length)])
-      }, 2000)
+      ;(async () => {
+        try {
+          // dynamic import for client-only TF models
+          const coco = await import('@tensorflow-models/coco-ssd')
+          await import('@tensorflow/tfjs')
+          const img = new Image()
+          img.src = url
+          await img.decode()
+          const model = await coco.load()
+          const predictions = await model.detect(img)
+          console.log('predictions', predictions)
+
+          const top = predictions[0]
+          const label = top ? top.class : 'unknown'
+          const query = `Is the item "${label}" allowed in carry-on baggage? Describe briefly.`
+
+          // call RAG API with detected label
+          const res = await fetch('/api/rag', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, category: label }),
+          })
+          const data = await res.json()
+          const verdict = data?.verdict
+          if (verdict === 'PACK') onResult('result-pack')
+          else if (verdict === 'CHECK') onResult('result-check')
+          else if (verdict === 'PASS') onResult('result-pass')
+          else {
+            const results: Screen[] = ['result-pass', 'result-check', 'result-pack']
+            onResult(results[Math.floor(Math.random() * results.length)])
+          }
+        } catch (e) {
+          console.error('Object detection or RAG call failed', e)
+          const results: Screen[] = ['result-pass', 'result-check', 'result-pack']
+          setTimeout(() => onResult(results[Math.floor(Math.random() * results.length)]), 1200)
+        }
+      })()
     },
     [onResult],
   )
