@@ -9,9 +9,13 @@
     "ingest:js": "node ./scripts/dist/scripts/ingest.js",
     "retry:ingest": "ts-node ./scripts/retry_upload.ts",
     "retry:ingest:js": "node ./scripts/dist/scripts/retry_upload.js",
-    "test:embeds": "ts-node ./scripts/test_embedding_models.ts"
+    "test:embeds": "ts-node ./scripts/test_embedding_models.ts",
+    "list:gemini": "ts-node ./scripts/list_gemini_models.ts",
     "build": "next build",
     "start": "next start"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
