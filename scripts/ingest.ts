@@ -60,10 +60,17 @@ async function upsertChunks(source: string, metadata: any, chunks: string[]) {
       metadata: { ...metadata, chunk_index: i },
       embedding,
     }
-
     const { error } = await supabase.from('documents').insert(row)
     if (error) {
       console.error('Supabase insert error for', source, error)
+      // if row-level security prevents insert, save to local failed uploads for retry
+      try {
+        const dumpPath = path.resolve(process.cwd(), 'scripts/failed_uploads.jsonl')
+        const entry = JSON.stringify({ row, error: { code: error.code, message: error.message } })
+        await fs.appendFile(dumpPath, entry + '\n')
+      } catch (e) {
+        console.error('Failed to write failed upload dump', e)
+      }
     }
   }
 }

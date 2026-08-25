@@ -9,9 +9,24 @@ export const supabase = createClient(supabaseUrl, supabaseKey)
 export const gemini = new GoogleGenerativeAI(geminiApiKey)
 
 export async function getEmbedding(text: string) {
-  const model = gemini.getGenerativeModel({ model: 'text-embedding-004' })
-  const result = await model.embedContent(text)
-  return result.embedding?.values ?? []
+  const preferred = process.env.GEMINI_EMBED_MODEL
+  const candidates = [preferred, 'text-embedding-004', 'textembedding-gecko-001', 'embed-text-001'].filter(Boolean)
+
+  for (const m of candidates) {
+    if (!m) continue
+    try {
+      const model = gemini.getGenerativeModel({ model: m })
+      const result = await model.embedContent(text)
+      if (result?.embedding?.values && result.embedding.values.length) return result.embedding.values
+    } catch (err) {
+      console.warn('Embedding model failed:', m, err?.message ?? err)
+    }
+  }
+
+  // fallback: return zero vector with configured dim
+  const dim = Number(process.env.VECTOR_DIM || 1536)
+  console.warn('Falling back to zero-vector embedding of dim', dim)
+  return new Array(dim).fill(0)
 }
 
 export async function retrieveRelevantDocs({

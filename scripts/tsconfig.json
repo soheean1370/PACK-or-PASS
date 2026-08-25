@@ -6,8 +6,8 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "outDir": "./scripts/dist",
-    "rootDir": "."
+    "outDir": "../scripts/dist",
+    "rootDir": ".."
   },
-  "include": ["./scripts/**/*", "./lib/**/*"]
+  "include": ["../scripts/**/*", "../lib/**/*"]
 }

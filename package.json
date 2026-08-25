@@ -6,7 +6,9 @@
     "dev": "next dev",
     "ingest": "node --loader ts-node/esm ./scripts/ingest.ts",
     "build:ingest": "tsc -p ./scripts/tsconfig.json",
-    "ingest:js": "node ./scripts/dist/scripts/ingest.js"
+    "ingest:js": "node ./scripts/dist/scripts/ingest.js",
+    "retry:ingest": "ts-node ./scripts/retry_upload.ts",
+    "retry:ingest:js": "node ./scripts/dist/scripts/retry_upload.js",
     "build": "next build",
     "start": "next start"
   },
