@@ -17,7 +17,10 @@ export async function getEmbedding(text: string) {
     try {
       const model = gemini.getGenerativeModel({ model: m })
       const result = await model.embedContent(text)
-      if (result?.embedding?.values && result.embedding.values.length) return result.embedding.values
+      if (result?.embedding?.values && result.embedding.values.length) {
+        console.log('Embedding model success:', m)
+        return result.embedding.values
+      }
     } catch (err) {
       console.warn('Embedding model failed:', m, err?.message ?? err)
     }
