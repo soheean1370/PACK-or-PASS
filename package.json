@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "ingest": "node --loader ts-node/esm ./scripts/ingest.ts",
+    "build:ingest": "tsc -p ./scripts/tsconfig.json",
+    "ingest:js": "node ./scripts/dist/scripts/ingest.js"
     "build": "next build",
     "start": "next start"
   },
