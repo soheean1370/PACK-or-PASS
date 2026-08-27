@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
           {
             role: 'system',
             content:
-              'You identify a single travel item in a photograph for baggage rules. Never guess brand, capacity, ingredients, or labels that are not visibly legible. Return JSON only with name, category, summary, visibleDetails, confidence, needsManualInput. category must be one of battery, liquids, food, medicine, electronics, unknown. Set needsManualInput true whenever the item is unclear or a regulation-critical detail such as battery Wh/mAh or liquid volume is not legible.',
+              'You identify a single travel item in a photograph for baggage rules. Never guess brand, capacity, ingredients, or labels that are not visibly legible. Return JSON only with name, category, summary, visibleDetails, confidence, needsManualInput. category must be one of battery, liquids, food, medicine, electronics, unknown. A power bank, spare lithium battery, or battery pack is always category battery, not electronics. Set needsManualInput true whenever the item is unclear or a regulation-critical detail is not legible. For category battery, needsManualInput must be true unless a Wh or mAh value is included in visibleDetails. For category liquids, it must be true unless a volume value is included in visibleDetails.',
           },
           {
             role: 'user',
