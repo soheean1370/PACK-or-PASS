@@ -51,6 +51,8 @@ function chunkText(text: string, maxChars = 1000) {
 }
 
 async function upsertChunks(source: string, metadata: any, chunks: string[]) {
+  let uploaded = 0
+  let failed = 0
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
     const embedding = await getEmbedding(chunk)
@@ -62,6 +64,7 @@ async function upsertChunks(source: string, metadata: any, chunks: string[]) {
     }
     const { error } = await supabase.from('documents').insert(row)
     if (error) {
+      failed++
       console.error('Supabase insert error for', source, error)
       // if row-level security prevents insert, save to local failed uploads for retry
       try {
@@ -71,8 +74,11 @@ async function upsertChunks(source: string, metadata: any, chunks: string[]) {
       } catch (e) {
         console.error('Failed to write failed upload dump', e)
       }
+    } else {
+      uploaded++
     }
   }
+  return { uploaded, failed }
 }
 
 async function main() {
@@ -81,19 +87,24 @@ async function main() {
   const files = await walkDir(docsDir)
   console.log(`Found ${files.length} markdown files`)
   let processed = 0
+  let uploaded = 0
+  let failed = 0
   for (const file of files) {
     try {
       const src = await fs.readFile(file, 'utf-8')
       const { metadata, body } = parseFrontmatter(src)
       const chunks = chunkText(body, 1200)
-      await upsertChunks(path.relative(process.cwd(), file), metadata, chunks)
+      const result = await upsertChunks(path.relative(process.cwd(), file), metadata, chunks)
+      uploaded += result.uploaded
+      failed += result.failed
       processed++
-      console.log(`Uploaded ${chunks.length} chunks for ${file}`)
+      console.log(`Processed ${chunks.length} chunks for ${file} (uploaded=${result.uploaded}, failed=${result.failed})`)
     } catch (err) {
       console.error('Error processing', file, err)
     }
   }
-  console.log(`Done. Processed ${processed}/${files.length} files.`)
+  console.log(`Done. Processed ${processed}/${files.length} files; uploaded=${uploaded}, failed=${failed}.`)
+  if (failed > 0) process.exitCode = 1
 }
 
 main().catch((e) => {
