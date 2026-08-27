@@ -22,7 +22,7 @@ import {
   UtensilsCrossed,
   Upload,
 } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type Screen =
   | 'home'
@@ -36,6 +36,20 @@ type Screen =
   | 'final-check'
 
 type Verdict = 'PACK' | 'CHECK' | 'PASS'
+
+type VisionResult = {
+  name: string
+  category: 'battery' | 'liquids' | 'food' | 'medicine' | 'electronics' | 'unknown'
+  summary: string
+  visibleDetails: string[]
+  confidence: number
+  needsManualInput: boolean
+}
+
+type AnalysisResult = VisionResult & {
+  verdict: Verdict
+  explanation: string
+}
 
 interface LuggageItem {
   id: number
@@ -419,54 +433,105 @@ function TravelSetupScreen({
   )
 }
 
-function ScanScreen({ onResult, onBack }: { onResult: (r: Screen) => void; onBack: () => void }) {
+function ScanScreen({ onResult, onBack }: { onResult: (result: AnalysisResult) => void; onBack: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [preview, setPreview] = useState<string | null>(null)
+  const [status, setStatus] = useState<'idle' | 'recognizing' | 'confirming' | 'checking' | 'error'>('idle')
+  const [recognized, setRecognized] = useState<VisionResult | null>(null)
+  const [itemName, setItemName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview)
+    }
+  }, [preview])
+
+  const resizeForAnalysis = async (file: File) => {
+    const source = URL.createObjectURL(file)
+    try {
+      const image = new Image()
+      image.src = source
+      await image.decode()
+      const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('이미지를 처리할 수 없습니다.')
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      return canvas.toDataURL('image/jpeg', 0.86)
+    } finally {
+      URL.revokeObjectURL(source)
+    }
+  }
 
   const handleFile = useCallback(
-    (file: File) => {
+    async (file: File) => {
+      if (!file.type.startsWith('image/')) {
+        setError('이미지 파일만 업로드할 수 있어요.')
+        setStatus('error')
+        return
+      }
       const url = URL.createObjectURL(file)
       setPreview(url)
-      ;(async () => {
-        try {
-          // dynamic import for client-only TF models
-          const coco = await import('@tensorflow-models/coco-ssd')
-          await import('@tensorflow/tfjs')
-          const img = new Image()
-          img.src = url
-          await img.decode()
-          const model = await coco.load()
-          const predictions = await model.detect(img)
-          console.log('predictions', predictions)
+      setRecognized(null)
+      setError(null)
+      setStatus('recognizing')
 
-          const top = predictions[0]
-          const label = top ? top.class : 'unknown'
-          const query = `Is the item "${label}" allowed in carry-on baggage? Describe briefly.`
-
-          // call RAG API with detected label
-          const res = await fetch('/api/rag', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, category: label }),
-          })
-          const data = await res.json()
-          const verdict = data?.verdict
-          if (verdict === 'PACK') onResult('result-pack')
-          else if (verdict === 'CHECK') onResult('result-check')
-          else if (verdict === 'PASS') onResult('result-pass')
-          else {
-            const results: Screen[] = ['result-pass', 'result-check', 'result-pack']
-            onResult(results[Math.floor(Math.random() * results.length)])
-          }
-        } catch (e) {
-          console.error('Object detection or RAG call failed', e)
-          const results: Screen[] = ['result-pass', 'result-check', 'result-pack']
-          setTimeout(() => onResult(results[Math.floor(Math.random() * results.length)]), 1200)
-        }
-      })()
+      try {
+        const image = await resizeForAnalysis(file)
+        const visionResponse = await fetch('/api/vision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image }),
+        })
+        const vision = await visionResponse.json()
+        if (!visionResponse.ok) throw new Error(vision.error || '이미지를 인식하지 못했습니다.')
+        setRecognized(vision)
+        setItemName(vision.name)
+        setStatus('confirming')
+      } catch (error) {
+        console.error('Image analysis failed', error)
+        setError(error instanceof Error ? error.message : '분석 중 오류가 발생했습니다.')
+        setStatus('error')
+      }
     },
     [onResult],
   )
+
+  const reset = () => {
+    if (preview) URL.revokeObjectURL(preview)
+    setPreview(null)
+    setRecognized(null)
+    setItemName('')
+    setError(null)
+    setStatus('idle')
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const checkRegulation = async () => {
+    if (!recognized || !itemName.trim()) return
+    setError(null)
+    setStatus('checking')
+    try {
+      const query = `${itemName.trim()}. ${recognized.summary} ${recognized.visibleDetails.join(', ')}. 기내 수하물 반입 가능 여부를 한국어로 판정해 주세요.`
+      const ragResponse = await fetch('/api/rag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, category: recognized.category }),
+      })
+      const rag = await ragResponse.json()
+      if (!ragResponse.ok || !['PACK', 'CHECK', 'PASS'].includes(rag.verdict)) {
+        throw new Error(rag.error || '규정 판정에 실패했습니다.')
+      }
+      onResult({ ...recognized, name: itemName.trim(), verdict: rag.verdict, explanation: rag.explanation || recognized.summary })
+    } catch (error) {
+      console.error('RAG analysis failed', error)
+      setError(error instanceof Error ? error.message : '규정 분석 중 오류가 발생했습니다.')
+      setStatus('confirming')
+    }
+  }
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
@@ -504,11 +569,19 @@ function ScanScreen({ onResult, onBack }: { onResult: (r: Screen) => void; onBac
           {preview ? (
             <>
               <img src={preview} alt="촬영된 물품" className="absolute inset-0 w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center">
+              <div className="absolute inset-0 bg-black/45 flex flex-col items-center justify-center px-6 text-center">
                 <div className="w-16 h-16 border-4 border-white rounded-full flex items-center justify-center mb-3 animate-pulse">
                   <Sparkles className="h-7 w-7 text-white" />
                 </div>
-                <p className="text-white font-semibold text-sm">AI 분석 중...</p>
+                <p className="text-white font-semibold text-sm">
+                  {status === 'recognizing' ? '사진에서 물품을 읽는 중...' : status === 'checking' ? '여행 규정을 확인하는 중...' : status === 'confirming' ? '인식 결과를 확인해주세요' : '사진을 준비했어요'}
+                </p>
+                {recognized && <p className="mt-1 text-xs text-white/80">인식: {recognized.name}</p>}
+                {status === 'error' && (
+                  <button onClick={(event) => { event.stopPropagation(); reset() }} className="mt-3 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-800">
+                    다른 사진 선택
+                  </button>
+                )}
               </div>
             </>
           ) : (
@@ -528,8 +601,27 @@ function ScanScreen({ onResult, onBack }: { onResult: (r: Screen) => void; onBac
 
         <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onFileChange} />
 
+        {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-center text-xs text-red-700">{error}</p>}
+
+        {recognized && status === 'confirming' && (
+          <div className="rounded-2xl border border-[#1a9e5c]/20 bg-[#e8f7ee] p-4">
+            <p className="mb-2 text-xs font-bold text-[#1a9e5c]">인식 결과를 확인해주세요</p>
+            <input
+              value={itemName}
+              onChange={(event) => setItemName(event.target.value)}
+              className="w-full rounded-xl border border-green-200 bg-white px-3 py-2 text-sm font-semibold text-gray-900 outline-none focus:ring-2 focus:ring-[#1a9e5c]/30"
+              aria-label="인식한 물품 이름"
+            />
+            <p className="mt-2 text-xs text-green-800">{recognized.summary}</p>
+            {recognized.needsManualInput && <p className="mt-1 text-xs font-medium text-amber-700">용량·성분 등은 사진에서 확인되지 않아 제품 표기를 직접 확인해주세요.</p>}
+            <button onClick={checkRegulation} disabled={!itemName.trim()} className="mt-3 w-full rounded-xl bg-[#1a9e5c] py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-gray-300">
+              이 물품으로 규정 확인
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center justify-between px-4">
-          <button onClick={() => fileRef.current?.click()} className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center">
+          <button onClick={preview ? reset : () => fileRef.current?.click()} className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center" aria-label={preview ? '사진 다시 선택' : '사진 업로드'}>
             <Upload className="h-5 w-5 text-slate-700" />
           </button>
           <button
@@ -561,16 +653,47 @@ function ScanScreen({ onResult, onBack }: { onResult: (r: Screen) => void; onBac
 
 function ResultScreen({
   resultKey,
+  analysis,
   onAddToLuggage,
   onScanAgain,
   onBack,
 }: {
   resultKey: 'result-pass' | 'result-check' | 'result-pack'
+  analysis: AnalysisResult | null
   onAddToLuggage: () => void
   onScanAgain: () => void
   onBack: () => void
 }) {
-  const data = DEMO_RESULTS[resultKey]
+  const categoryLabels: Record<VisionResult['category'], string> = {
+    battery: '전자기기 > 배터리',
+    liquids: '액체류',
+    food: '식품',
+    medicine: '의약품',
+    electronics: '전자기기',
+    unknown: '확인 필요',
+  }
+  const categoryIcons: Record<VisionResult['category'], LucideIcon> = {
+    battery: BatteryCharging,
+    liquids: Droplets,
+    food: UtensilsCrossed,
+    medicine: Pill,
+    electronics: Plug,
+    unknown: PackageCheck,
+  }
+  const fallback = DEMO_RESULTS[resultKey]
+  const data = analysis
+    ? {
+        ...fallback,
+        verdict: analysis.verdict,
+        name: analysis.name,
+        category: categoryLabels[analysis.category],
+        ingredients: analysis.visibleDetails.join(', ') || '사진에서 확인되지 않음',
+        weight: analysis.needsManualInput ? '사진에서 확인 필요' : '사진 인식 결과 참고',
+        reason: analysis.explanation,
+        tip: analysis.needsManualInput ? '사진에서 읽기 어려운 정보가 있어 제품 표기를 직접 확인해주세요.' : analysis.summary,
+        icon: categoryIcons[analysis.category],
+      }
+    : fallback
   const { verdict } = data
 
   const verdictStyle = {
@@ -922,13 +1045,21 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('home')
   const [luggageItems, setLuggageItems] = useState<LuggageItem[]>(DEMO_ITEMS)
   const [resultKey, setResultKey] = useState<'result-pass' | 'result-check' | 'result-pack'>('result-pass')
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
   const [saved, setSaved] = useState(false)
 
   const goTo = (s: Screen) => setScreen(s)
 
-  const handleResult = (s: Screen) => {
-    setResultKey(s as 'result-pass' | 'result-check' | 'result-pack')
-    setScreen(s)
+  const handleResult = (result: AnalysisResult) => {
+    const screenByVerdict: Record<Verdict, 'result-pass' | 'result-check' | 'result-pack'> = {
+      PACK: 'result-pack',
+      CHECK: 'result-check',
+      PASS: 'result-pass',
+    }
+    const nextScreen = screenByVerdict[result.verdict]
+    setAnalysis(result)
+    setResultKey(nextScreen)
+    setScreen(nextScreen)
   }
 
   const handleAddToLuggage = () => {
@@ -967,6 +1098,7 @@ export default function App() {
         return (
           <ResultScreen
             resultKey={resultKey}
+            analysis={analysis}
             onAddToLuggage={handleAddToLuggage}
             onScanAgain={() => goTo('scan')}
             onBack={() => goTo('scan')}
