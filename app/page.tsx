@@ -516,15 +516,29 @@ function ScanScreen({ onResult, onBack }: { onResult: (result: AnalysisResult) =
     setStatus('checking')
     try {
       const query = `${itemName.trim()}. ${recognized.summary} ${recognized.visibleDetails.join(', ')}. 기내 수하물 반입 가능 여부를 한국어로 판정해 주세요.`
-      const ragResponse = await fetch('/api/rag', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, category: recognized.category }),
-      })
-      const rag = await ragResponse.json()
-      if (!ragResponse.ok || !['PACK', 'CHECK', 'PASS'].includes(rag.verdict)) {
-        throw new Error(rag.error || '규정 판정에 실패했습니다.')
+      let rag: any
+      let lastError = '규정 판정에 실패했습니다.'
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const ragResponse = await fetch('/api/rag', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, category: recognized.category }),
+          })
+          const data = await ragResponse.json().catch(() => ({}))
+          if (ragResponse.ok && ['PACK', 'CHECK', 'PASS'].includes(data.verdict)) {
+            rag = data
+            break
+          }
+          lastError = data.detail || data.error || lastError
+          if (ragResponse.status < 500) break
+        } catch {
+          lastError = '네트워크 연결을 확인해주세요.'
+        }
+
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800))
       }
+      if (!rag) throw new Error(lastError)
       onResult({ ...recognized, name: itemName.trim(), verdict: rag.verdict, explanation: rag.explanation || recognized.summary })
     } catch (error) {
       console.error('RAG analysis failed', error)

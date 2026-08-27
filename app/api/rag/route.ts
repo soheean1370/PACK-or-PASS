@@ -21,6 +21,11 @@ export async function POST(req: NextRequest) {
     return Response.json(result)
   } catch (error) {
     console.error('RAG API error:', error)
-    return Response.json({ error: 'RAG request failed' }, { status: 500 })
+    const detail = error instanceof Error ? error.message : 'Unknown RAG error'
+    const upstreamFailure = detail.startsWith('OpenAI judgment failed') || detail.startsWith('OpenAI embed')
+    return Response.json(
+      { error: 'RAG request failed', detail: process.env.NODE_ENV === 'production' ? undefined : detail },
+      { status: upstreamFailure ? 502 : 500 },
+    )
   }
 }
