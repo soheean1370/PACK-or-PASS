@@ -10,6 +10,7 @@
     "retry:ingest": "ts-node ./scripts/retry_upload.ts",
     "retry:ingest:js": "node ./scripts/dist/scripts/retry_upload.js",
     "test:embeds": "ts-node ./scripts/test_embedding_models.ts",
+    "test:embeds-open": "ts-node ./scripts/test_embedding_openai.ts",
     "list:gemini": "ts-node ./scripts/list_gemini_models.ts",
     "build": "next build",
     "start": "next start"

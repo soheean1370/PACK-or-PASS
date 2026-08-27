@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import fs from 'fs/promises'
 import path from 'path'
 import { createClient } from '@supabase/supabase-js'
@@ -25,6 +26,7 @@ async function main() {
   console.log(`Found ${lines.length} failed rows to retry`)
   let success = 0
   let fail = 0
+  const remaining: string[] = []
   for (const line of lines) {
     try {
       const parsed = JSON.parse(line)
@@ -33,15 +35,18 @@ async function main() {
       if (error) {
         console.error('Retry insert failed:', error)
         fail++
+        remaining.push(line)
       } else {
         success++
       }
     } catch (e) {
       console.error('Failed to parse or insert line:', e)
       fail++
+      remaining.push(line)
     }
   }
 
+  await fs.writeFile(dumpPath, remaining.length ? `${remaining.join('\n')}\n` : '', 'utf-8')
   console.log(`Retry finished. success=${success}, fail=${fail}`)
 }
 

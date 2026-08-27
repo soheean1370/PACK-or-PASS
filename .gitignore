@@ -1,4 +1,5 @@
 node_modules
 .next
 .env
+scripts/failed_uploads.jsonl
 package-lock.json
